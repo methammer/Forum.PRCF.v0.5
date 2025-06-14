@@ -16,6 +16,7 @@ import {
 import { CreateUserDialog } from "@/components/admin/CreateUserDialog";
 import { EditUserDialog } from "@/components/admin/EditUserDialog";
 import { toast } from '@/hooks/use-toast';
+import { useUser } from "@/contexts/UserContext"; // Import useUser
 
 export type UserProfile = {
   id: string;
@@ -25,31 +26,39 @@ export type UserProfile = {
   full_name: string | null;
   avatar_url: string | null;
   status: 'pending_approval' | 'approved' | 'rejected' | null;
-  role: 'user' | 'moderator' | 'admin' | null;
+  role: 'user' | 'moderator' | 'admin' | 'SUPER_ADMIN' | null; // Added SUPER_ADMIN
 };
 
 const UserManagementPage = () => {
   const [users, setUsers] = useState<UserProfile[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // Keep this for data fetching state
   const [error, setError] = useState<string | null>(null);
   
   const [isEditUserDialogOpen, setIsEditUserDialogOpen] = useState(false);
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<UserProfile | null>(null);
   const [currentAdminUserId, setCurrentAdminUserId] = useState<string | null>(null);
 
+  const { user: contextUser, profile: contextProfile, isLoadingAuth: isAuthLoading } = useUser();
+
   const fetchUsers = useCallback(async () => {
+    console.log("UserManagementPage: fetchUsers called.");
     setIsLoading(true);
     setError(null);
     try {
       const { data, error: rpcError } = await supabase.rpc('get_all_user_details');
-      if (rpcError) throw rpcError;
+      if (rpcError) {
+        console.error("UserManagementPage: Error from get_all_user_details RPC:", rpcError);
+        throw rpcError;
+      }
+      console.log("UserManagementPage: Users fetched successfully:", data);
       setUsers(data as UserProfile[] || []);
     } catch (err: any) {
-      console.error("Error fetching users:", err);
-      setError(err.message || "Erreur lors de la récupération de la liste des utilisateurs.");
+      console.error("UserManagementPage: Error fetching users in fetchUsers catch block:", err);
+      const errorMessage = err.message || "Erreur lors de la récupération de la liste des utilisateurs.";
+      setError(errorMessage);
       toast({
-        title: "Erreur de chargement",
-        description: err.message || "Impossible de charger les utilisateurs.",
+        title: "Erreur de chargement des utilisateurs",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -58,19 +67,35 @@ const UserManagementPage = () => {
   }, []);
 
   useEffect(() => {
-    const getCurrentAdminId = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setCurrentAdminUserId(user.id);
+    console.log("UserManagementPage: useEffect triggered. isAuthLoading:", isAuthLoading, "ContextUser:", !!contextUser, "ContextProfile Role:", contextProfile?.role);
+    if (!isAuthLoading && contextUser && contextProfile) {
+      setCurrentAdminUserId(contextUser.id);
+      if (contextProfile.role === 'admin' || contextProfile.role === 'SUPER_ADMIN') {
+        console.log("UserManagementPage: Admin authenticated, calling fetchUsers.");
+        fetchUsers();
+      } else {
+        console.log("UserManagementPage: User not admin, access denied.");
+        setError("Accès refusé. Vous n'avez pas les permissions nécessaires pour voir cette page.");
+        setIsLoading(false);
+        setUsers([]); // Clear users if not admin
       }
-    };
-    getCurrentAdminId();
-    fetchUsers();
-  }, [fetchUsers]);
+    } else if (!isAuthLoading && !contextUser) {
+      console.log("UserManagementPage: User not authenticated.");
+      setError("Veuillez vous connecter pour accéder à cette page.");
+      setIsLoading(false);
+      setUsers([]); // Clear users if not authenticated
+    } else if (isAuthLoading) {
+      console.log("UserManagementPage: Auth is loading, waiting...");
+      // Optionally set a loading message or keep existing loader
+      setIsLoading(true); // Ensure main loader shows while auth is processing
+    }
+  }, [isAuthLoading, contextUser, contextProfile, fetchUsers]);
+
 
   const getRoleBadgeVariant = (role: UserProfile['role']) => {
     switch (role) {
       case 'admin':
+      case 'SUPER_ADMIN':
         return 'destructive';
       case 'moderator':
         return 'secondary';
@@ -112,6 +137,17 @@ const UserManagementPage = () => {
         toast({ title: "Erreur", description: "Nouveau rôle non spécifié.", variant: "destructive" });
         return;
     }
+    // Prevent admin from demoting themselves if they are the only SUPER_ADMIN or a regular admin demoting self
+    if (userId === currentAdminUserId && contextProfile?.role === 'SUPER_ADMIN' && newRole !== 'SUPER_ADMIN') {
+        // Potentially add a check if they are the *only* SUPER_ADMIN
+        // For now, let's assume a SUPER_ADMIN can change their own role if needed, but be cautious.
+        // If it's a regular admin, they shouldn't demote themselves from 'admin' easily.
+    }
+    if (userId === currentAdminUserId && contextProfile?.role === 'admin' && newRole !== 'admin') {
+         toast({ title: "Action non autorisée", description: "Les administrateurs ne peuvent pas changer leur propre rôle directement de cette manière.", variant: "destructive" });
+         return;
+    }
+
     try {
       const { error: updateError } = await supabase
         .from('profiles')
@@ -157,7 +193,7 @@ const UserManagementPage = () => {
     setIsEditUserDialogOpen(true);
   };
 
-  if (isLoading && !currentAdminUserId) { // Also wait for admin ID
+  if (isAuthLoading || (isLoading && users.length === 0 && !error) ) { 
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -197,7 +233,7 @@ const UserManagementPage = () => {
         <CardContent>
           {users.length === 0 && !isLoading ? (
             <p className="text-gray-500 dark:text-gray-400 text-center py-8">
-              Aucun utilisateur à afficher.
+              Aucun utilisateur à afficher. Vérifiez les permissions ou réessayez.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -222,7 +258,7 @@ const UserManagementPage = () => {
                       <TableCell className="dark:text-gray-300">{user.email || 'Non fourni'}</TableCell>
                       <TableCell>
                         <Badge variant={getRoleBadgeVariant(user.role)} className="capitalize">
-                          {user.role || 'N/A'}
+                          {user.role?.replace('SUPER_ADMIN', 'Super Admin') || 'N/A'}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -251,13 +287,22 @@ const UserManagementPage = () => {
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator className="dark:bg-gray-700" />
-                            <DropdownMenuItem onClick={() => handleChangeRole(user.id, 'moderator')} className="dark:text-gray-300 dark:hover:!bg-gray-700" disabled={user.id === currentAdminUserId && user.role === 'admin'}>
+                            <DropdownMenuItem 
+                                onClick={() => handleChangeRole(user.id, 'moderator')} 
+                                className="dark:text-gray-300 dark:hover:!bg-gray-700" 
+                                disabled={(user.id === currentAdminUserId && (contextProfile?.role === 'admin' || contextProfile?.role === 'SUPER_ADMIN')) || user.role === 'moderator'}>
                                <ShieldAlert className="mr-2 h-4 w-4" /> Passer Modérateur
                             </DropdownMenuItem>
-                             <DropdownMenuItem onClick={() => handleChangeRole(user.id, 'admin')} className="dark:text-gray-300 dark:hover:!bg-gray-700" disabled={user.role === 'admin'}>
+                             <DropdownMenuItem 
+                                onClick={() => handleChangeRole(user.id, 'admin')} 
+                                className="dark:text-gray-300 dark:hover:!bg-gray-700" 
+                                disabled={user.role === 'admin' || user.role === 'SUPER_ADMIN'}>
                                <ShieldAlert className="mr-2 h-4 w-4" /> Passer Admin
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleChangeRole(user.id, 'user')} className="dark:text-gray-300 dark:hover:!bg-gray-700" disabled={user.id === currentAdminUserId && user.role === 'admin'}>
+                            <DropdownMenuItem 
+                                onClick={() => handleChangeRole(user.id, 'user')} 
+                                className="dark:text-gray-300 dark:hover:!bg-gray-700" 
+                                disabled={(user.id === currentAdminUserId && (contextProfile?.role === 'admin' || contextProfile?.role === 'SUPER_ADMIN')) || user.role === 'user'}>
                                <ShieldAlert className="mr-2 h-4 w-4" /> Passer Utilisateur
                             </DropdownMenuItem>
                             <DropdownMenuSeparator className="dark:bg-gray-700"/>

@@ -1,4 +1,3 @@
-```sql
 /*
   # Fix get_current_user_role Function Volatility
 
@@ -22,4 +21,3 @@ $$;
 
 -- Re-grant execute permission just in case, though it should persist
 GRANT EXECUTE ON FUNCTION public.get_current_user_role() TO authenticated;
-```

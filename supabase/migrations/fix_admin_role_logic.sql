@@ -1,4 +1,3 @@
-```sql
 /*
   # Fix Admin Role Logic for Updates and Case Sensitivity
 
@@ -176,5 +175,3 @@ USING (
 
 -- Ensure RLS is enabled (it should be, but as a safeguard)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-
-```

@@ -15,7 +15,6 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label'; // Keep if used, otherwise remove
 import {
   Select,
   SelectContent,
@@ -26,6 +25,7 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { toast } from '@/hooks/use-toast';
 import { UserPlus } from 'lucide-react';
+import { FunctionsHttpError, FunctionsRelayError, FunctionsFetchError } from '@supabase/supabase-js';
 
 const userRoles = ['user', 'moderator', 'admin'] as const;
 
@@ -60,7 +60,7 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({ onUserCreate
 
   const onSubmit = async (data: CreateUserFormData) => {
     setIsSubmitting(true);
-    console.log("Form data for new user:", data);
+    console.log("CreateUserDialog: Submitting form data for new user:", data);
 
     try {
       const { data: functionResponse, error: functionError } = await supabase.functions.invoke('create-user-admin', {
@@ -74,40 +74,60 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({ onUserCreate
       });
 
       if (functionError) {
-        console.error("Edge function error details:", functionError);
-        let errorMessage = functionError.message;
-        // Attempt to parse a more specific error from the function's response if available
-        try {
-            const parsedError = JSON.parse(functionError.message);
-            if (parsedError && parsedError.error) {
-                errorMessage = parsedError.error;
+        console.error("CreateUserDialog: Edge function invocation returned an error. Raw error object:", functionError);
+        let detailedMessage = "Une erreur est survenue lors de l'appel à la fonction Edge.";
+        
+        if (functionError instanceof FunctionsHttpError) {
+          console.log("CreateUserDialog: Error is FunctionsHttpError. Status:", functionError.context.status, "Response object:", functionError.context);
+          try {
+            // functionError.context is the Response object. We need to parse its body.
+            const errorBody = await functionError.context.json();
+            if (errorBody && errorBody.error && typeof errorBody.error === 'string') {
+              detailedMessage = errorBody.error;
+            } else if (errorBody && errorBody.message && typeof errorBody.message === 'string') { // Some functions might return { message: "..." }
+              detailedMessage = errorBody.message;
+            } else {
+               detailedMessage = `Erreur HTTP ${functionError.context.status}: ${functionError.context.statusText || 'Erreur inconnue de la fonction Edge.'}`;
             }
-        } catch (e) {
-            // Ignore if parsing fails, use original message
+          } catch (e) {
+            console.error("CreateUserDialog: Failed to parse JSON error response body from FunctionsHttpError:", e);
+            detailedMessage = `Erreur HTTP ${functionError.context.status}: ${functionError.context.statusText || 'Impossible de lire la réponse d\'erreur de la fonction Edge.'}`;
+          }
+        } else if (functionError instanceof FunctionsRelayError) {
+          detailedMessage = `Erreur de relais de la fonction: ${functionError.message}`;
+        } else if (functionError instanceof FunctionsFetchError) {
+          detailedMessage = `Erreur de réseau lors de l'appel de la fonction: ${functionError.message}`;
+        } else if (functionError.message) {
+          detailedMessage = functionError.message; // For other error types
         }
-        throw new Error(errorMessage || "Une erreur est survenue lors de l'appel à la fonction.");
+        
+        console.error("CreateUserDialog: Throwing error with detailed message:", detailedMessage);
+        throw new Error(detailedMessage);
       }
       
-      if (functionResponse?.error) {
-         console.error("Edge function returned an error in response:", functionResponse.error);
-         throw new Error(functionResponse.error || "La fonction a retourné une erreur inattendue.");
+      if (functionResponse && functionResponse.error) {
+         console.error("CreateUserDialog: Edge function returned 2xx but with an error in its response body:", functionResponse.error);
+         const responseError = typeof functionResponse.error === 'string' 
+            ? functionResponse.error 
+            : (functionResponse.error.message || JSON.stringify(functionResponse.error));
+         throw new Error(responseError || "La fonction a retourné une erreur inattendue dans sa réponse.");
       }
 
-      console.log("Edge function response:", functionResponse);
+      console.log("CreateUserDialog: Edge function call successful. Response:", functionResponse);
 
       toast({
         title: "Utilisateur créé avec succès",
         description: `${data.email} a été ajouté et son profil mis à jour.`,
       });
-      onUserCreated(); // Re-fetch users
-      setIsOpen(false); // Close dialog
-      form.reset(); // Reset form
+      onUserCreated();
+      setIsOpen(false);
+      form.reset();
 
     } catch (error: any) {
-      console.error("Error creating user:", error);
+      console.error("CreateUserDialog: Error caught in onSubmit handler:", error);
       toast({
         title: "Erreur lors de la création",
-        description: error.message || "Une erreur est survenue lors de la création de l'utilisateur.",
+        description: error.message || "Une erreur non spécifiée est survenue lors de la création de l'utilisateur.",
         variant: "destructive",
       });
     } finally {
@@ -119,7 +139,7 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({ onUserCreate
     <Dialog open={isOpen} onOpenChange={(open) => {
       setIsOpen(open);
       if (!open) {
-        form.reset(); // Reset form when dialog is closed
+        form.reset();
       }
     }}>
       <DialogTrigger asChild>
@@ -201,7 +221,7 @@ export const CreateUserDialog: React.FC<CreateUserDialogProps> = ({ onUserCreate
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent className="dark:bg-gray-800 dark:border-gray-700 dark:text-white">
-                      {userRoles.map(roleValue => ( // Renamed to avoid conflict with 'role' from data
+                      {userRoles.map(roleValue => (
                         <SelectItem key={roleValue} value={roleValue} className="capitalize hover:dark:bg-gray-700">
                           {roleValue}
                         </SelectItem>

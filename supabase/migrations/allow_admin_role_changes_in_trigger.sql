@@ -1,4 +1,3 @@
-```sql
 /*
   # Allow Admins to Change Profile Roles in Trigger
 
@@ -93,4 +92,3 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-```

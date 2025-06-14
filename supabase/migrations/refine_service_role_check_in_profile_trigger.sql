@@ -1,4 +1,3 @@
-```sql
 /*
   # Refine Service Role Check in Profile Update Trigger
 
@@ -52,4 +51,3 @@ $$;
 -- The trigger itself ('before_profile_update_prevent_id_role_change' on public.profiles)
 -- does not need to be recreated or altered as it already calls the
 -- public.prevent_profile_id_role_change() function, which we have just updated.
-```

@@ -1,4 +1,3 @@
-```sql
 /*
   # Check JWT Claims in Profile Update Trigger
 
@@ -83,4 +82,3 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-```
